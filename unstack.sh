@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-#
+
+# **unstack.sh**
+
 # Stops that which is started by ``stack.sh`` (mostly)
 # mysql and rabbit are left running as OpenStack code refreshes
 # do not require them to be restarted.
@@ -25,14 +27,17 @@ if [[ "$1" == "--all" ]]; then
 fi
 
 # Shut down devstack's screen to get the bulk of OpenStack services in one shot
-SESSION=$(screen -ls | grep "[0-9].stack" | awk '{ print $1 }')
-if [[ -n "$SESSION" ]]; then
-    screen -X -S $SESSION quit
+SCREEN=$(which screen)
+if [[ -n "$SCREEN" ]]; then
+    SESSION=$(screen -ls | awk '/[0-9].stack/ { print $1 }')
+    if [[ -n "$SESSION" ]]; then
+        screen -X -S $SESSION quit
+    fi
 fi
 
 # Swift runs daemons
 if is_service_enabled swift; then
-    swift-init all stop
+    swift-init all stop 2>/dev/null || true
 fi
 
 # Apache has the WSGI processes
@@ -41,7 +46,7 @@ if is_service_enabled horizon; then
 fi
 
 # Get the iSCSI volumes
-if is_service_enabled n-vol; then
+if is_service_enabled cinder n-vol; then
     TARGETS=$(sudo tgtadm --op show --mode target)
     if [[ -n "$TARGETS" ]]; then
         # FIXME(dtroyer): this could very well require more here to
@@ -49,7 +54,12 @@ if is_service_enabled n-vol; then
         echo "iSCSI target cleanup needed:"
         echo "$TARGETS"
     fi
-    stop_service tgt
+
+    if [[ "$os_PACKAGE" = "deb" ]]; then
+        stop_service tgt
+    else
+        stop_service tgtd
+    fi
 fi
 
 if [[ -n "$UNSTACK_ALL" ]]; then
@@ -57,4 +67,9 @@ if [[ -n "$UNSTACK_ALL" ]]; then
     if is_service_enabled mysql; then
         stop_service mysql
     fi
+fi
+
+# Quantum dhcp agent runs dnsmasq
+if is_service_enabled q-dhcp; then
+    sudo kill -9 $(ps aux | awk '/[d]nsmasq.+interface=tap/ { print $2 }')
 fi
